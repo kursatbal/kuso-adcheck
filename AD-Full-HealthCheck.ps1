@@ -4875,9 +4875,9 @@ if ($null -eq $_privInfraExtPenalty) { $_privInfraExtPenalty = 0 }
 $PrivInfraExtScore = [Math]::Min(100, [int]$_privInfraExtPenalty)
 
 $RiskRating = switch ($DomainRiskScore) {
-    { $_ -ge 80 } { "Critical" }
-    { $_ -ge 60 } { "Poor" }
-    { $_ -ge 40 } { "Acceptable" }
+    { $_ -ge 80 } { "Critical"; break }
+    { $_ -ge 60 } { "Poor"; break }
+    { $_ -ge 40 } { "Acceptable"; break }
     default { "Good" }
 }
 
