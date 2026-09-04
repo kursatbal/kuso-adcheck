@@ -48,6 +48,20 @@ if (-not [string]::IsNullOrWhiteSpace($NetworkRange)) {
     $NetworkScanInput = $NetworkRange.Trim()
 }
 
+function Resolve-IPv4TestTarget($HostName){
+    # Windows synthesizes an AAAA (::1) answer when a host resolves its own name,
+    # which makes Test-NetConnection hang on the dead-end IPv6 loopback attempt
+    # before falling back to IPv4. Resolve to a real IPv4 address up front instead.
+    if ([string]::IsNullOrWhiteSpace($HostName)) { return $HostName }
+    try {
+        $ipv4 = [System.Net.Dns]::GetHostAddresses($HostName) |
+            Where-Object { $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork } |
+            Select-Object -First 1
+        if ($ipv4) { return $ipv4.IPAddressToString }
+    } catch {}
+    return $HostName
+}
+
 function Convert-ADTimestamp($ts){
     if($ts){
         # LastLogonTimestamp value (Windows FileTime format) is converted to a proper date
@@ -4055,7 +4069,8 @@ if ($AdcsInstalled -and $AdcsConfigNC) {
 
             # ESC8: Web enrollment endpoint (port 80)
             try {
-                $webEnroll = [bool](Test-NetConnection -ComputerName $caHost -Port 80 -InformationLevel Quiet `
+                $caHostForTest = Resolve-IPv4TestTarget $caHost
+                $webEnroll = [bool](Test-NetConnection -ComputerName $caHostForTest -Port 80 -InformationLevel Quiet `
                     -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
             } catch {}
 
@@ -4568,13 +4583,14 @@ try {
     foreach ($ca in $CaServers) {
         $portReachable = $false
         $urlHit = $false
+        $caForTest = Resolve-IPv4TestTarget $ca
         try {
-            $t80 = Test-NetConnection -ComputerName $ca -Port 80 -WarningAction SilentlyContinue
+            $t80 = Test-NetConnection -ComputerName $caForTest -Port 80 -WarningAction SilentlyContinue
             if ($t80 -and $t80.TcpTestSucceeded) { $portReachable = $true }
         } catch {}
         if (-not $portReachable) {
             try {
-                $t443 = Test-NetConnection -ComputerName $ca -Port 443 -WarningAction SilentlyContinue
+                $t443 = Test-NetConnection -ComputerName $caForTest -Port 443 -WarningAction SilentlyContinue
                 if ($t443 -and $t443.TcpTestSucceeded) { $portReachable = $true }
             } catch {}
         }
