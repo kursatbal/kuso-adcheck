@@ -4,6 +4,8 @@ Active Directory security & health assessment tool. A single PowerShell script s
 
 Full methodology write-up: https://kursatbal.com/p/kuso-adcheck-metodoloji/
 
+**[View a sample report](sample-report.html)** — generated against a lab domain, all names/hostnames/IPs anonymized.
+
 ## What it does
 
 Kuso AD Check evaluates AD security across **21 analysis screens** and **96 security rules** grouped into 6 risk categories, mapping findings to the Microsoft Tiering model (T0–T2) and MITRE ATT&CK techniques.
