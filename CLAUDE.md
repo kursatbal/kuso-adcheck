@@ -8,7 +8,7 @@ Betik DC üzerinde çalışır, çıktı olarak self-contained bir HTML raporu �
 `C:\Users\kbal\Desktop\kusoadcheck_extracted\KusoADCheck\AD-Full-HealthCheck.ps1`
 
 ## Deploy Döngüsü
-**ÖNEMLİ:** Script Invoke-Command içinde çalışırsa double-hop problemi oluşur — diğer DC'lere (örn. 10.210.9.97) WMI/SMB ile ulaşamaz, skor yanlış (yüksek) çıkar.
+**ÖNEMLİ:** Script Invoke-Command içinde çalışırsa double-hop problemi oluşur — diğer DC'lere WMI/SMB ile ulaşamaz, skor yanlış (yüksek) çıkar.
 **Doğru yöntem: Scheduled Task ile çalıştır (SYSTEM account, double-hop yok)**
 
 ```powershell
