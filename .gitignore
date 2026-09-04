@@ -1,0 +1,6 @@
+latest.html
+*.html
+!README.html
+tools/pingcastle_baseline_snapshot.json
+tools/pingcastle_baseline_timeline.json
+tools/pingcastle_risk_history.json
