@@ -147,6 +147,27 @@ try {
 # 2. Get DC list
 $DCs = Get-ADDomainController -Filter * | Select-Object Name, HostName, IPv4Address, Site
 
+# Fast one-time WinRM reachability check so the many per-DC remote checks below don't
+# each pay their own full connection timeout against a DC that's offline/unreachable.
+function Test-DCWinRMReachable($ComputerName, $TimeoutMs = 2000) {
+    try {
+        $tcp = New-Object System.Net.Sockets.TcpClient
+        $async = $tcp.BeginConnect($ComputerName, 5985, $null, $null)
+        $ok = $async.AsyncWaitHandle.WaitOne($TimeoutMs)
+        if ($ok -and $tcp.Connected) { $tcp.EndConnect($async); $tcp.Close(); return $true }
+        $tcp.Close()
+        return $false
+    } catch { return $false }
+}
+$ReachableDCs = @()
+foreach ($dc in $DCs) {
+    if (Test-DCWinRMReachable -ComputerName $dc.Name) {
+        $ReachableDCs += $dc
+    } else {
+        Add-SkippedDCRecord -DC $dc.Name -Section "DC Unreachable (WinRM)" -Reason "Port 5985 not reachable within 2000ms - skipped for all remote checks"
+    }
+}
+
 # 3. Fetch all AD Sites
 $Sites = Get-ADReplicationSite -Filter * | Select-Object Name
 
@@ -2782,7 +2803,7 @@ foreach ($ou in $UnprotectedOUs | Select-Object -First 20) {
 
 # 21) AD backup age (best-effort from backup event logs on DCs)
 $DcBackupLastDates = @()
-foreach ($dc in $DCs) {
+foreach ($dc in $ReachableDCs) {
     try {
         $dcLastBackup = Invoke-Command -ComputerName $dc.Name -ScriptBlock {
             try {
@@ -2823,7 +2844,7 @@ if ($BackupAgeDays -ge 0) {
 # 22) DC spooler exposure
 $DcSpoolerRunning = @()
 $DcSpoolerUnknown = @()
-foreach ($dc in $DCs) {
+foreach ($dc in $ReachableDCs) {
     try {
         $spooler = Get-CimInstance -ClassName Win32_Service -ComputerName $dc.Name -Filter "Name='Spooler'" -ErrorAction Stop
         if ($spooler -and $spooler.State -eq "Running") {
@@ -2871,7 +2892,7 @@ $AuditCritical = @(
     'Directory Service Changes',
     'Credential Validation'
 )
-foreach ($dc in $DCs) {
+foreach ($dc in $ReachableDCs) {
     try {
         $auditOutput = Invoke-Command -ComputerName $dc.Name -ScriptBlock { auditpol /get /category:* } -ErrorAction Stop
         $auditText = ($auditOutput | Out-String)
@@ -2957,7 +2978,7 @@ foreach ($msg in $HardenedPathsIssues | Select-Object -First 20) {
 
 # 24c) LLMNR not disabled via GPO
 $LLMNREnabledDcs = @()
-foreach ($dc in $DCs) {
+foreach ($dc in $ReachableDCs) {
     try {
         $llResult = Invoke-Command -ComputerName $dc.Name -ScriptBlock {
             $k = Get-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient" -Name "EnableMulticast" -ErrorAction SilentlyContinue
@@ -2975,7 +2996,7 @@ Add-PingFinding -Category "Anomalies" -Rule "LLMNR not disabled via GPO" `
 
 # 24d) PowerShell script block logging not enforced
 $PSLoggingMissingDcs = @()
-foreach ($dc in $DCs) {
+foreach ($dc in $ReachableDCs) {
     try {
         $psResult = Invoke-Command -ComputerName $dc.Name -ScriptBlock {
             $sb  = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging" -Name EnableScriptBlockLogging -ErrorAction SilentlyContinue
@@ -3035,7 +3056,7 @@ Add-PingFinding -Category "Anomalies" -Rule "Anonymous LDAP binding (rootDse) en
 
 # 25) Old NTLM posture (LmCompatibilityLevel)
 $OldNtlmDcs = @()
-foreach ($dc in $DCs) {
+foreach ($dc in $ReachableDCs) {
     try {
         $lmValue = Invoke-Command -ComputerName $dc.Name -ScriptBlock {
             try {
@@ -3068,7 +3089,7 @@ foreach ($item in $OldNtlmDcs | Select-Object -First 20) {
 
 # S-KerberosArmoring: check if KDC claims/armoring (FAST) is enabled on DCs via GPO registry
 $KerberosArmoringIssues = @()
-foreach ($dc in $DCs) {
+foreach ($dc in $ReachableDCs) {
     try {
         $armorResult = Invoke-Command -ComputerName $dc.Name -ScriptBlock {
             $kdcPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\KDC\Parameters'
@@ -3097,7 +3118,7 @@ foreach ($item in $KerberosArmoringIssues | Select-Object -First 20) {
 # 26) LDAP signing and channel binding posture
 $LdapSigningIssues = @()
 $LdapChannelBindingIssues = @()
-foreach ($dc in $DCs) {
+foreach ($dc in $ReachableDCs) {
     try {
         $ldapPosture = Invoke-Command -ComputerName $dc.Name -ScriptBlock {
             $ntdsPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters'
@@ -3626,7 +3647,7 @@ try {
 
 # 32) Tier 0 - NTLMv1 active usage from Security events
 $NtlmV1Rows = @()
-foreach ($dc in $DCs) {
+foreach ($dc in $ReachableDCs) {
     try {
         $events = Invoke-Command -ComputerName $dc.Name -ScriptBlock {
             param($StartTime)
@@ -3910,7 +3931,7 @@ $frsRiskCount = 0
 $frsRiskDcs   = @()
 $SysvolDcDetails = @()
 
-foreach ($dc in $DCs) {
+foreach ($dc in $ReachableDCs) {
     $dcName       = $dc.Name
     $isFrs        = $false
     $sysvolReach  = $false
@@ -4201,7 +4222,7 @@ Add-PingFinding -Category "Privileged Infrastructure" -Rule "Tier2: FGPP coverag
 
 # 42) Tier 2 - SMB/LDAP signing baseline on DCs
 $SmbSigningIssues = @()
-foreach ($dc in $DCs) {
+foreach ($dc in $ReachableDCs) {
     try {
         $smbReq = Invoke-Command -ComputerName $dc.Name -ScriptBlock {
             try {
@@ -4319,7 +4340,7 @@ Add-PingFinding -Category "Privileged Infrastructure" -Rule "Tier2: Computer obj
 
 # 45) Tier 2 - WinRM/RDP authorization scope on DCs
 $RemoteAccessRows = @()
-foreach ($dc in $DCs) {
+foreach ($dc in $ReachableDCs) {
     try {
         $groups = Invoke-Command -ComputerName $dc.Name -ScriptBlock {
             $rm = @()
@@ -4344,7 +4365,7 @@ Add-PingFinding -Category "Privileged Infrastructure" -Rule "Tier2: WinRM and RD
 
 # 46) Tier 2 - CredSSP usage exposure
 $CredSspRows = @()
-foreach ($dc in $DCs) {
+foreach ($dc in $ReachableDCs) {
     try {
         $credSspEnabled = Invoke-Command -ComputerName $dc.Name -ScriptBlock {
             try {
@@ -4400,7 +4421,7 @@ $WDigestRows = @()
 $LsaProtectionRows = @()
 $CredGuardRows = @()
 
-foreach ($dc in $DCs) {
+foreach ($dc in $ReachableDCs) {
     $dcShort = ($dc.Name -split '\.')[0]
     $isLocal = ($dcShort -ieq $_localHost)
     try {
@@ -5280,7 +5301,7 @@ function Get-ReplicationPartnerLabel {
     return $value
 }
 # DC Health Loop (Shortened)
-foreach ($dc in $DCs) {
+foreach ($dc in $ReachableDCs) {
     # 1. Uptime Check (WMI/CIM ile)
     try {
         $OsInfo = Get-CimInstance -ClassName Win32_OperatingSystem -ComputerName $dc.Name -ErrorAction Stop
